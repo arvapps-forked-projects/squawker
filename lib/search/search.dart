@@ -80,6 +80,18 @@ class _SearchScreenState extends State<_SearchScreen> with SingleTickerProviderS
     // TODO: Focussing makes the selection go to the start?!
   }
 
+  void _resetQuery() {
+    if (_searchUsersKey.currentState != null) {
+      _searchUsersKey.currentState!.resetQuery();
+    }
+    if (_searchTweetsKey.currentState != null) {
+      _searchTweetsKey.currentState!.resetQuery();
+    }
+    if (_searchTrendsKey.currentState != null) {
+      _searchTrendsKey.currentState!.resetQuery();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     TwitterAccount.setCurrentContext(context);
@@ -109,21 +121,16 @@ class _SearchScreenState extends State<_SearchScreen> with SingleTickerProviderS
             focusNode: _focusNode,
             style: searchTheme.textTheme.titleLarge,
             textInputAction: TextInputAction.search,
+            onChanged: (String text) {
+              _resetQuery();
+            },
           ),
           actions: [
             IconButton(
               icon: const Icon(Symbols.close_rounded),
               onPressed: () {
                 _queryController.clear();
-                if (_searchUsersKey.currentState != null) {
-                  _searchUsersKey.currentState!.resetQuery();
-                }
-                if (_searchTweetsKey.currentState != null) {
-                  _searchTweetsKey.currentState!.resetQuery();
-                }
-                if (_searchTrendsKey.currentState != null) {
-                  _searchTrendsKey.currentState!.resetQuery();
-                }
+                _resetQuery();
               }
             ),
             ScopedBuilder<SubscriptionsModel, List<Subscription>>.transition(
@@ -175,8 +182,9 @@ class _SearchScreenState extends State<_SearchScreen> with SingleTickerProviderS
                 ChangeNotifierProvider<VideoContextState>(
                   create: (_) => VideoContextState(prefs.get(optionMediaDefaultMute))),
               ],
-              child: Expanded(
-                child: TabBarView(controller: _tabController, children: [
+              child: Expanded(child: TabBarView(
+                controller: _tabController,
+                children: [
                   TweetSearchResultList<SearchUsersModel, UserWithExtra>(
                     key: _searchUsersKey,
                     queryController: _queryController,
@@ -195,8 +203,9 @@ class _SearchScreenState extends State<_SearchScreen> with SingleTickerProviderS
                     store: context.read<SearchTweetsModel>(),
                     searchFunction: (q, c) => context.read<SearchTweetsModel>().searchTweets(q, PrefService.of(context).get(optionEnhancedSearches), trending: true, cursor: c),
                     itemBuilder: (context, item) => TweetTile(tweet: item, clickable: true))
-              ])),
-            )
+                ]
+              ),),
+            ),
           ],
         ),
       ),
@@ -232,6 +241,7 @@ class TweetSearchResultListState<S extends Store<SearchStatus<T>>, T> extends St
   late ScrollController _scrollController;
   double _lastOffset = 0;
   bool _inAppend = false;
+  bool _doingRefresh = false;
 
   @override
   void initState() {
@@ -259,10 +269,11 @@ class TweetSearchResultListState<S extends Store<SearchStatus<T>>, T> extends St
     _scrollController = ScrollController();
     _pagingController = PagingController(firstPageKey: null);
     _pagingController.addPageRequestListener((String? cursor) {
-      fetchResults(cursor);
+      if (!_doingRefresh) {
+        fetchResults(cursor);
+      }
+      _doingRefresh = false;
     });
-
-    fetchResults(null);
   }
 
   @override
@@ -274,20 +285,20 @@ class TweetSearchResultListState<S extends Store<SearchStatus<T>>, T> extends St
 
   void resetQuery() {
     _scrollController.dispose();
-    _pagingController.dispose();
+    _scrollController = ScrollController();
+    _doingRefresh = true;
+    _pagingController.refresh();
     _previousQuery = '';
     _previousCursor = null;
     _lastOffset = 0;
-    _scrollController = ScrollController();
-    _pagingController = PagingController(firstPageKey: null);
-    _pagingController.addPageRequestListener((String? cursor) {
-      fetchResults(cursor);
-    });
   }
 
   void fetchResults(String? cursor) {
     if (mounted) {
       String query = widget.queryController.text;
+      if (query != _previousQuery) {
+        cursor = null;
+      }
       if (query == _previousQuery && cursor == _previousCursor) {
         widget.searchFunction('', null);
         return;
@@ -328,13 +339,16 @@ class TweetSearchResultListState<S extends Store<SearchStatus<T>>, T> extends St
           pagingController: _pagingController,
           addAutomaticKeepAlives: false,
           builderDelegate: PagedChildBuilderDelegate(
+            newPageProgressIndicatorBuilder: (context) {
+              return Container();
+            },
             itemBuilder: (context, elm, index) {
               if (!_inAppend) {
                 _lastOffset = _scrollController.offset;
               }
               return widget.itemBuilder(context, elm);
             }
-          )
+          ),
         );
       },
     );
